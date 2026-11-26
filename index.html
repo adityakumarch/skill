@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meeting Action Extractor</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#687386; --line:#e3e8f0; --accent:#635bdb; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; background:#f4f6fb; color:var(--ink); }
+    main { width:min(960px,92%); margin:48px auto; }
+    header { margin-bottom:24px; }
+    .eyebrow { color:var(--accent); font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:8px 0; font-size:clamp(28px,5vw,40px); }
+    .sub { color:var(--muted); margin:0; line-height:1.6; }
+    .panel { background:white; border:1px solid var(--line); border-radius:18px; padding:24px; box-shadow:0 12px 35px #1c2b4a0b; }
+    label { display:block; font-weight:700; margin:0 0 10px; }
+    textarea { width:100%; min-height:260px; resize:vertical; border:1px solid var(--line); border-radius:12px; padding:15px; font:14px/1.6 ui-monospace,Consolas,monospace; outline:none; }
+    textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px #635bdb1c; }
+    .controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:16px; }
+    select,button { border-radius:10px; padding:12px 16px; font-weight:700; font-size:14px; }
+    select { border:1px solid var(--line); background:white; color:var(--ink); }
+    button { border:0; background:var(--accent); color:white; cursor:pointer; }
+    button.secondary { background:#eef0ff; color:#4039ae; }
+    button:disabled { opacity:.6; cursor:wait; }
+    #status { color:var(--muted); font-size:13px; margin-left:auto; }
+    #error { color:#b42318; margin-top:14px; }
+    .results { margin-top:24px; }
+    .results-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    h2 { font-size:20px; margin:0 0 14px; }
+    .count { color:var(--muted); font-size:13px; }
+    .empty { color:var(--muted); border:1px dashed var(--line); border-radius:12px; padding:22px; text-align:center; }
+    .action { border:1px solid var(--line); border-radius:12px; padding:16px; margin:10px 0; }
+    .action strong { display:block; margin-bottom:8px; }
+    .meta { display:grid; grid-template-columns:1fr 2fr 1fr; gap:12px; }
+    .meta div { min-width:0; }
+    .meta small { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; }
+    .meta span { overflow-wrap:anywhere; }
+    @media(max-width:620px) { main{margin:26px auto}.panel{padding:17px}.meta{grid-template-columns:1fr}.controls>*{width:100%}#status{margin-left:0} }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Meeting productivity tool</div>
+    <h1>Meeting Action Extractor</h1>
+    <p class="sub">Paste meeting notes and turn them into a clear list of owners, tasks, and deadlines.</p>
+  </header>
+
+  <section class="panel">
+    <label for="notes">Meeting notes</label>
+    <textarea id="notes" placeholder="Paste your meeting notes here...">{{ sample_notes }}</textarea>
+    <div class="controls">
+      <select id="mode" aria-label="Extraction mode">
+        <option value="offline">Offline (rule-based)</option>
+        <option value="live">AI extraction (Gemini)</option>
+      </select>
+      <button id="extractBtn" onclick="extractActions()">Extract action items</button>
+      <button class="secondary" onclick="clearAll()">Clear</button>
+      <span id="status" role="status">Ready</span>
+    </div>
+    <div id="error" role="alert"></div>
+  </section>
+
+  <section class="results" aria-live="polite">
+    <div class="results-head">
+      <h2>Extracted action items</h2>
+      <span class="count" id="count">0 items</span>
+    </div>
+    <div id="results"><div class="empty">Your extracted tasks will appear here.</div></div>
+  </section>
+</main>
+
+<script>
+async function extractActions() {
+  const notes = document.getElementById('notes').value;
+  const mode = document.getElementById('mode').value;
+  const button = document.getElementById('extractBtn');
+  const status = document.getElementById('status');
+  const error = document.getElementById('error');
+
+  error.textContent = '';
+  button.disabled = true;
+  status.textContent = 'Extracting...';
+
+  try {
+    const response = await fetch('/extract', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({notes, mode})
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Something went wrong.');
+    renderActions(data.actions || []);
+    status.textContent = mode === 'live' ? 'AI extraction complete' : 'Offline extraction complete';
+  } catch (err) {
+    error.textContent = err.message;
+    status.textContent = 'Could not extract';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderActions(actions) {
+  const container = document.getElementById('results');
+  document.getElementById('count').textContent = `${actions.length} item${actions.length === 1 ? '' : 's'}`;
+  if (!actions.length) {
+    container.innerHTML = '<div class="empty">No action items found. Try AI extraction for free-form notes, or use lines formatted like “Alex: Send the draft by Friday.”</div>';
+    return;
+  }
+  container.replaceChildren();
+  actions.forEach((item, index) => {
+    const card = document.createElement('article');
+    card.className = 'action';
+    const title = document.createElement('strong');
+    title.textContent = `Action item ${index + 1}`;
+    const grid = document.createElement('div');
+    grid.className = 'meta';
+    [['Owner', item.owner], ['Task', item.task], ['Deadline', item.deadline]].forEach(([label, value]) => {
+      const cell = document.createElement('div');
+      const small = document.createElement('small');
+      small.textContent = label;
+      const span = document.createElement('span');
+      span.textContent = value;
+      cell.append(small, span);
+      grid.append(cell);
+    });
+    card.append(title, grid);
+    container.append(card);
+  });
+}
+
+function clearAll() {
+  document.getElementById('notes').value = '';
+  document.getElementById('results').innerHTML = '<div class="empty">Your extracted tasks will appear here.</div>';
+  document.getElementById('count').textContent = '0 items';
+  document.getElementById('error').textContent = '';
+  document.getElementById('status').textContent = 'Ready';
+}
+</script>
+</body>
+</html>
